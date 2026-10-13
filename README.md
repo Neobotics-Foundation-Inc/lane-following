@@ -1,6 +1,6 @@
 # Lane Following
 
-Version 0.1
+Version 0.1.0
 
 Repository: https://github.com/Neobotics-Foundation-Inc/lane-following
 
@@ -181,4 +181,4 @@ GPLv3. Copyright Neobotics Foundation Inc.
 
 ## Changelog
 
-- 0.1: first version. Four strips, tape-shaped stripes, prediction of hidden lines, heading from a fitted line, constant speed.
+- 0.1.0: first version. Four strips, tape-shaped stripes, prediction of hidden lines, heading from a fitted line, constant speed.
