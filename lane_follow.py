@@ -9,7 +9,7 @@ Title: Lane Following
 
 Author: Neobotics
 
-Version: 0.1
+Version: 0.1.0
 
 Purpose: Drive the NeoRacer between two lines of blue tape and stay in the middle of
 the lane using the camera only.

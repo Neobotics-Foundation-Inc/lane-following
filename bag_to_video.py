@@ -10,7 +10,7 @@ Title: Rosbag to Video
 
 Author: Neobotics
 
-Version: 0.1
+Version: 0.1.0
 
 Purpose: Turn the camera frames recorded in a rosbag into an ordinary mp4 file that plays
 in QuickTime or VLC. The NeoRacer camera node publishes each frame as the raw JPEG bytes
