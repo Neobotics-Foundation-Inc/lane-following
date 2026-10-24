@@ -142,7 +142,7 @@ python3 lane_follow.py
 
 Nothing else may publish `/drive` meanwhile (another follower, a dashboard that drives): the mux passes both, so the car gets the other program's commands between this one's and turns far less than asked.
 
-From the start on the outer loop, over two laps (90 s, 33 m): the car's middle stayed in its lane the whole time, the whole car between the lines 89% of the time, 2.9 cm off the lane's middle (median), 7.3 cm at the 95th percentile, 16 cm at worst (in the S, where the taped lane is also 5 to 7 cm wider than elsewhere).
+From the start on the outer loop, over a minute (38 m, about two and a half laps, at 0.63 m/s): the car's middle stayed in its lane the whole time, the whole car between the lines 87% of the time, 2.7 cm off the lane's middle (median), 7.4 cm at the 95th percentile, 13 cm at worst (in the S, where the taped lane is also 5 to 7 cm wider than elsewhere). The steering reversed on 3% of commands. The twin's NeoRacer drives as neoracer-mujoco's model of the car does: its firmware's speed loop, motor, steering servo, springs and mass.
 
 ## Settings
 
@@ -171,7 +171,7 @@ All settings are constants at the top of lane_follow.py.
 | LOST_FRAMES | 30 | Frames without a lane before the search restarts |
 | HEADING_SMOOTH | 0.3 | Heading smoothing, 0 to 1 |
 | SPEED | 0.1 | Constant speed, 0 to 1 (about 0.6 m/s) |
-| KP, KI, KD | 1.0, 0, 0.2 | PID gains on offset. KP was 2.0 in the Neobotics room |
+| KP, KI, KD | 1.0, 0, 0 | PID gains on offset. In the Neobotics room 2.0, 0, 0.2. KD multiplies the frame-to-frame noise of the detection by the frame rate: at 0.2 the steering reversed on half of all commands and the front wheels shook |
 | K_HEADING | 0 | Gain on heading. 0.6 in the Neobotics room; on Purdue's tight bends any cuts the corners |
 | INTEGRAL_LIMIT | 0.5 | Cap on the integral term |
 
@@ -203,5 +203,5 @@ GPLv3. Copyright Neobotics Foundation Inc.
 
 ## Changelog
 
-- Unreleased (branch `purdue-testbed`): Purdue's testbed. The tape is a set of colours (`TAPE`: yellow and white there, blue in the Neobotics room), dashes joined into one stripe (`JOIN_GAP`); the search starts at the horizon and stops above the car's nose (`CROP_TOP_FRAC`, `CROP_BOTTOM_FRAC`); KP 1.0 and K_HEADING 0 for its tight bends. Tried in the AutoDRIVE twin of the testbed.
+- Unreleased (branch `purdue-testbed`): Purdue's testbed. The tape is a set of colours (`TAPE`: yellow and white there, blue in the Neobotics room), dashes joined into one stripe (`JOIN_GAP`); the search starts at the horizon and stops above the car's nose (`CROP_TOP_FRAC`, `CROP_BOTTOM_FRAC`); KP 1.0, K_HEADING 0 and KD 0 for its tight bends and its noisy detections. Tried in the AutoDRIVE twin of the testbed.
 - 0.1.0: first version. Four strips, tape-shaped stripes, prediction of hidden lines, heading from a fitted line, constant speed.

@@ -150,11 +150,15 @@ SPEED = 0.1
 # INTEGRAL_LIMIT - cap on the integral term
 # Neobotics room: KP 2.0, K_HEADING 0.6. Purdue testbed (in the AutoDRIVE twin): KP 1.0,
 # K_HEADING 0. Its bends are tight for how far ahead the camera sees (the nearest strip
-# is about 0.7 m ahead of the rear wheels): more of either cuts the corners
+# is about 0.7 m ahead of the rear wheels): more of either cuts the corners.
+# KD 0 there (0.2 in the room): the offset is measured afresh each frame, and its change from
+# frame to frame is mostly the detection's pixel noise, which KD multiplies by the frame rate
+# (KD / dt, 12 at 0.2 and 60 Hz). At 0.2 the steering reversed on half of all commands, so the
+# front wheels shook, and in the twin the car once left its lane; at 0 it reversed on 3 %
 # TODO: Adjust if needed
 KP = 1.0
 KI = 0.0
-KD = 0.2
+KD = 0.0
 K_HEADING = 0.0
 INTEGRAL_LIMIT = 0.5
 
