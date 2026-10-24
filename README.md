@@ -4,7 +4,7 @@ Version 0.1.0
 
 Repository: https://github.com/Neobotics-Foundation-Inc/lane-following
 
-lane_follow.py drives the NeoRacer between two lines of blue tape and keeps it in the middle of the lane. It uses the camera only.
+lane_follow.py drives the NeoRacer between two lines of tape and keeps it in the middle of the lane. It uses the camera only. The tape is blue in the Neobotics room; on Purdue's testbed it is a dashed yellow line down the middle of each road and white tape at its edges (`TAPE` picks which).
 
 ## Files
 
@@ -46,12 +46,12 @@ The car moves as soon as the program starts if the transmitter is switched to au
 
 ## How it works
 
-The program looks at the bottom half of the camera image and cuts it into four horizontal strips.
+The program looks at the floor in the camera image, from the horizon down to the car's own nose, and cuts it into four horizontal strips.
 
 ```
 +--------------------------------------------+
 |                                            |
-|      top half: not used                    |
+|      above the horizon: not used           |
 |                                            |
 +--------------------------------------------+
 |  strip 3   farthest, shows where the lane  |
@@ -63,11 +63,13 @@ The program looks at the bottom half of the camera image and cuts it into four h
 +--------------------------------------------+
 |  strip 0   nearest, shows where the car is |
 +--------------------------------------------+
+|      the car's nose: not used              |
++--------------------------------------------+
 ```
 
 Every frame, about 60 times a second, it does this:
 
-1. In each strip, find the blue blobs. Keep only the ones shaped like tape: a narrow stripe that runs through the strip. Blue alone is not enough, because the floor and other objects can look blue too.
+1. In each strip, find the blobs of tape colour (each colour in `TAPE`; pieces of one colour closer than `JOIN_GAP` join, so the dashed yellow line is one stripe). Keep only the ones shaped like tape: a narrow stripe that runs through the strip. Colour alone is not enough, because the floor and other objects can look the same colour too.
 2. Pick the two stripes that are a lane width apart. Those are the left and right lines.
 3. Follow each line from strip to strip. A stripe only counts if it continues the line below it, in the direction that line is leaning.
 4. If a line is out of view in a strip, predict where it is. First choice: next to the other line, at the lane width that strip measured earlier. Second choice: along the direction the line was heading.
@@ -83,7 +85,7 @@ The window shows the camera image with the program's work drawn on it.
 | Colour | Meaning |
 | --- | --- |
 | Gold lines | Edges of the four strips |
-| Grey outline | Blue blob that was rejected (not tape-shaped) |
+| Grey outline | Tape-coloured blob that was rejected (not tape-shaped) |
 | White outline | Blob accepted as tape |
 | Green dot | Line position that was seen |
 | Orange dot | Line position that was predicted |
@@ -130,18 +132,35 @@ A rosbag records the camera frames and the drive commands while the program runs
 
 A bag is about 100 to 200 MB per minute. You can also play a bag back and run lane_follow.py against it to tune settings without driving: stop the live stack with `racecar service stop`, then `ros2 bag play lane_run_1` in one terminal and `python3 lane_follow.py` in another. With the stack stopped, nothing moves the car.
 
+## Trying it in AutoDRIVE
+
+The AutoDRIVE simulator has a twin of Purdue's testbed with a NeoRacer on it (branch `purdue-cosim` of [Neobotics-Foundation-Inc/AutoDRIVE](https://github.com/Neobotics-Foundation-Inc/AutoDRIVE/tree/purdue-cosim), scene `NeoRacer - Purdue Testbed`). Its NeoRacer has the car's camera: a 130 degree fisheye, leaning 12 degrees up, 640x480. Run the simulator, its `autodrive_neoracer` bridge with the driver's mux and throttle nodes, then this program as on the car:
+
+```sh
+python3 lane_follow.py
+```
+
+Nothing else may publish `/drive` meanwhile (another follower, a dashboard that drives): the mux passes both, so the car gets the other program's commands between this one's and turns far less than asked.
+
+From the start on the outer loop, over two laps (90 s, 33 m): the car's middle stayed in its lane the whole time, the whole car between the lines 89% of the time, 2.9 cm off the lane's middle (median), 7.3 cm at the 95th percentile, 16 cm at worst (in the S, where the taped lane is also 5 to 7 cm wider than elsewhere).
+
 ## Settings
 
 All settings are constants at the top of lane_follow.py.
 
 | Setting | Value | Meaning |
 | --- | --- | --- |
-| BLUE | (31, 40, 125) to (117, 128, 255) | HSV range for the tape |
+| TAPE | (YELLOW, WHITE) | The tape's colours. (BLUE,) for the Neobotics room |
+| BLUE | (31, 40, 125) to (117, 128, 255) | HSV range for blue tape |
+| YELLOW | (20, 80, 150) to (40, 255, 255) | HSV range for Purdue's yellow tape, measured in the AutoDRIVE twin |
+| WHITE | (0, 0, 180) to (179, 50, 255) | HSV range for Purdue's white tape, measured in the AutoDRIVE twin |
+| JOIN_GAP | 15 | Pieces of one colour this many pixels apart join into one stripe (dashed lines) |
 | MIN_CONTOUR_AREA | 60 | Smallest blob to look at, in pixels |
 | TAPE_WIDTH_MIN, TAPE_WIDTH_MAX | 6, 35 | Width of a tape stripe, in pixels |
 | MIN_ASPECT | 2.0 | A stripe must be this many times longer than it is wide |
 | MIN_LENGTH_FRAC | 0.6 | A stripe must span this fraction of the strip height |
-| CROP_TOP_FRAC | 0.5 | Where the search starts, as a fraction of the image height |
+| CROP_TOP_FRAC | 0.66 | Where the search starts, as a fraction of the image height: the horizon (the camera leans 12 degrees up). It was 0.5 in the Neobotics room |
+| CROP_BOTTOM_FRAC | 0.84 | Where the search stops: above the car's nose, which the twin's camera sees. 1.0 if none is in view |
 | NUM_STRIPS | 4 | Number of strips |
 | MAX_JUMP | 100 | Max distance between a line and where it is expected, in pixels |
 | MIN_LANE_WIDTH, MAX_LANE_WIDTH | 100, 600 | Lane width limits before a strip has measured it, in pixels |
@@ -152,8 +171,8 @@ All settings are constants at the top of lane_follow.py.
 | LOST_FRAMES | 30 | Frames without a lane before the search restarts |
 | HEADING_SMOOTH | 0.3 | Heading smoothing, 0 to 1 |
 | SPEED | 0.1 | Constant speed, 0 to 1 (about 0.6 m/s) |
-| KP, KI, KD | 2.0, 0, 0.2 | PID gains on offset |
-| K_HEADING | 0.6 | Gain on heading |
+| KP, KI, KD | 1.0, 0, 0.2 | PID gains on offset. KP was 2.0 in the Neobotics room |
+| K_HEADING | 0 | Gain on heading. 0.6 in the Neobotics room; on Purdue's tight bends any cuts the corners |
 | INTEGRAL_LIMIT | 0.5 | Cap on the integral term |
 
 ## Tuning
@@ -171,8 +190,11 @@ All settings are constants at the top of lane_follow.py.
 ## Known limits
 
 - The program only sees what the camera sees. When the inside line of a corner leaves the view, it is predicted, not seen.
-- BLUE was tuned in one room. Different lights or a different floor need a retune.
-- Continuous tape works best. Dashed tape needs a lower MIN_LENGTH_FRAC.
+- BLUE was tuned in one room. Different lights or a different floor need a retune. YELLOW and WHITE were measured in the AutoDRIVE twin, not on Purdue's floor: retune them there.
+- Dashed tape is joined by JOIN_GAP. Gaps wider than it need a larger JOIN_GAP or a lower MIN_LENGTH_FRAC.
+- The nearest strip is about 0.7 m ahead of the rear wheels, so in a tight bend the car still cuts in a few centimetres.
+- The twin's camera (130 degrees across the image's diagonal, 12 degrees up) is the camera's spec and the CAD's lean. It has not been checked against a frame from a car: if the floor in a real frame does not start about two thirds of the way down, CROP_TOP_FRAC and the gains need the car's own values.
+- Junctions: the program does not choose a way. It follows the pair of lines it is tracking; on the twin's outer loop that kept it on the loop through both junctions in every run.
 - Speed is fixed. Slowing for bends is the next step.
 
 ## License
@@ -181,4 +203,5 @@ GPLv3. Copyright Neobotics Foundation Inc.
 
 ## Changelog
 
+- Unreleased (branch `purdue-testbed`): Purdue's testbed. The tape is a set of colours (`TAPE`: yellow and white there, blue in the Neobotics room), dashes joined into one stripe (`JOIN_GAP`); the search starts at the horizon and stops above the car's nose (`CROP_TOP_FRAC`, `CROP_BOTTOM_FRAC`); KP 1.0 and K_HEADING 0 for its tight bends. Tried in the AutoDRIVE twin of the testbed.
 - 0.1.0: first version. Four strips, tape-shaped stripes, prediction of hidden lines, heading from a fitted line, constant speed.

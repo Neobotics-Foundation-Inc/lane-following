@@ -11,13 +11,15 @@ Author: Neobotics
 
 Version: 0.1.0
 
-Purpose: Drive the NeoRacer between two lines of blue tape and stay in the middle of
-the lane using the camera only.
+Purpose: Drive the NeoRacer between two lines of tape and stay in the middle of the
+lane using the camera only. Blue tape (the Neobotics room) or Purdue's testbed: a dashed
+yellow centre line and white tape at the road's edge.
 
 Methodology:
-- Cut the bottom half of the camera image into 4 horizontal strips, near to far.
+- Cut the floor in the camera image (below the horizon, above the car's nose) into 4
+  horizontal strips, near to far.
 - In each strip, find pieces of tape: narrow stripes that run through the strip.
-  Blue pixels alone do not count.
+  Tape-coloured pixels alone do not count.
 - Two stripes the right distance apart are the two lane lines.
 - Follow each line from strip to strip in the direction it leans. A stripe that does
   not continue the line below it is ignored.
@@ -30,7 +32,7 @@ Methodology:
 
 Expected Outcome:
 - The NeoRacer drives forward at a fixed speed and steers to keep itself centred between
-  the two blue lines, starting each turn before it reaches the bend.
+  the two lines.
 - A window on the Jetson desktop shows the live camera image with:
     - the four strips (gold lines)
     - blobs that were rejected (grey) and blobs that were accepted as tape (white)
@@ -62,9 +64,21 @@ rc = racecar_core.create_racecar()
 
 # >> Constants <<
 
-# HSV range for the BLUE tape.
+# HSV ranges of the tape, one per colour: a pixel in any range in TAPE is tape.
+# Neobotics room: two lines of blue tape, TAPE = (BLUE,).
+# Purdue testbed: a dashed yellow line down the middle of each road and white tape at its
+# edges, TAPE = (YELLOW, WHITE). The red stop lines across a lane are not tape.
+# YELLOW and WHITE were measured in the AutoDRIVE twin of the testbed.
 # TODO: Retune with ~/jupyter_ws/neoracer-os/labs/utility/hsv-p_tuner.py on the car if needed
 BLUE = ((31, 40, 125), (117, 128, 255))
+YELLOW = ((20, 80, 150), (40, 255, 255))
+WHITE = ((0, 0, 180), (179, 50, 255))
+TAPE = (YELLOW, WHITE)
+
+# pieces of tape of one colour this many pixels apart join into one stripe, so a dashed
+# line counts as tape. 0 = no joining (the Neobotics room's tape is continuous)
+# TODO: Adjust if needed
+JOIN_GAP = 15
 
 # smallest blob (pixels) to be looked at
 MIN_CONTOUR_AREA = 60
@@ -81,11 +95,16 @@ MIN_ASPECT = 2.0
 MIN_LENGTH_FRAC = 0.6
 
 # CROP_TOP_FRAC - how far down the image the search starts,
-# as a fraction of the height (0.5 = the bottom half)
+# as a fraction of the height (0.5 = the bottom half). The floor starts at the
+# horizon: about two thirds down for the NeoRacer's camera, which leans 12 degrees up
+# (0.66 in the AutoDRIVE twin, which has the car's lens and lean)
+# CROP_BOTTOM_FRAC - where it stops: 1.0 = the bottom of the image. Less if the camera
+# sees the car's own nose there (0.84 in the AutoDRIVE twin)
 # NUM_STRIPS - number of horizontal strips that area is cut into. Strip 0 is
 # nearest the car
 # TODO: Adjust if needed
-CROP_TOP_FRAC = 0.5
+CROP_TOP_FRAC = 0.66
+CROP_BOTTOM_FRAC = 0.84
 NUM_STRIPS = 4
 
 # max distance (pixels) between a line and where it is expected
@@ -129,11 +148,14 @@ SPEED = 0.1
 # KP, KI, KD - PID gains on offset
 # K_HEADING - gain on heading, so the car turns before the bend
 # INTEGRAL_LIMIT - cap on the integral term
+# Neobotics room: KP 2.0, K_HEADING 0.6. Purdue testbed (in the AutoDRIVE twin): KP 1.0,
+# K_HEADING 0. Its bends are tight for how far ahead the camera sees (the nearest strip
+# is about 0.7 m ahead of the rear wheels): more of either cuts the corners
 # TODO: Adjust if needed
-KP = 2.0
+KP = 1.0
 KI = 0.0
 KD = 0.2
-K_HEADING = 0.6
+K_HEADING = 0.0
 INTEGRAL_LIMIT = 0.5
 
 # >> Variables <<
@@ -197,6 +219,31 @@ def segment_tilt(contour):
 
 
 """
+Identifier: tape_contours
+
+Usage: finds the blobs of tape colour in one strip. Each colour in TAPE is masked on its
+own and its pieces closer than JOIN_GAP joined, so a dashed line is one blob and two
+lines of different colours never merge.
+
+Parameters:
+- strip: the strip of the camera image to search
+
+Outputs:
+- list of contours, as rc_utils.find_contours returns them
+"""
+def tape_contours(strip):
+    hsv = cv.cvtColor(strip, cv.COLOR_BGR2HSV)
+    mask = np.zeros(strip.shape[:2], np.uint8)
+    for lower, upper in TAPE:
+        color = cv.inRange(hsv, lower, upper)
+        if JOIN_GAP > 0:
+            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (JOIN_GAP, JOIN_GAP))
+            color = cv.morphologyEx(color, cv.MORPH_CLOSE, kernel)
+        mask = cv.bitwise_or(mask, color)
+    return cv.findContours(mask, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)[0]
+
+
+"""
 Identifier: tape_segments
 
 Usage: finds every blob in one strip that is shaped like tape. Outlines every blob
@@ -212,7 +259,7 @@ Outputs:
 """
 def tape_segments(strip, strip_height, width):
     segments = []
-    for contour in rc_utils.find_contours(strip, BLUE[0], BLUE[1]):
+    for contour in tape_contours(strip):
         if rc_utils.get_contour_area(contour) < MIN_CONTOUR_AREA:
             continue
         rc_utils.draw_contour(strip, contour, rc_utils.ColorBGR.dark_gray.value)
@@ -401,15 +448,16 @@ Outputs:
 def draw_overlay(image):
     height, width = image.shape[0], image.shape[1]
     band_top = int(height * CROP_TOP_FRAC)
-    strip_height = (height - band_top) // NUM_STRIPS
+    band_bottom = int(height * CROP_BOTTOM_FRAC)
+    strip_height = (band_bottom - band_top) // NUM_STRIPS
 
-    cv.line(image, (width // 2, band_top), (width // 2, height), (200, 200, 200), 1)
+    cv.line(image, (width // 2, band_top), (width // 2, band_bottom), (200, 200, 200), 1)
 
     previous = None
     for i in range(NUM_STRIPS):
         if strip_center[i] is None:
             continue
-        row = height - i * strip_height - strip_height // 2
+        row = band_bottom - i * strip_height - strip_height // 2
         point = (int(rc_utils.clamp(strip_center[i], 0, width - 1)), row)
         if previous is not None:
             cv.line(image, previous, point, (0, 0, 255), 2)
@@ -449,12 +497,13 @@ def update_lines():
     height, width = image.shape[0], image.shape[1]
     image_width = width
     band_top = int(height * CROP_TOP_FRAC)
-    strip_height = (height - band_top) // NUM_STRIPS
+    band_bottom = int(height * CROP_BOTTOM_FRAC)
+    strip_height = (band_bottom - band_top) // NUM_STRIPS
 
     for i in range(NUM_STRIPS):
-        # Strip 0 at the bottom of the image. crop() is a view, so drawing on the strip
-        # draws on the full image
-        bottom = height - i * strip_height
+        # Strip 0 at the bottom of the search area. crop() is a view, so drawing on the
+        # strip draws on the full image
+        bottom = band_bottom - i * strip_height
         top = bottom - strip_height
         strip = rc_utils.crop(image, (top, 0), (bottom, width))
 
@@ -529,7 +578,7 @@ def update_lines():
                 memory_right[i] = None
 
     for i in range(NUM_STRIPS):
-        draw_strip(image, i, height - (i + 1) * strip_height, height - i * strip_height)
+        draw_strip(image, i, band_bottom - (i + 1) * strip_height, band_bottom - i * strip_height)
     return image
 
 
@@ -575,11 +624,11 @@ def start():
     rc.set_update_slow_time(0.5)
 
     print(
-        ">> Lane Following - Two Blue Lines\n"
+        ">> Lane Following - Two Lines of Tape\n"
         "\n"
         f"Speed is fixed at {SPEED}. Steering = PID on the lane offset in the nearest strip\n"
         f"(KP = {KP}, KI = {KI}, KD = {KD}) + {K_HEADING} x the lane heading fitted through all strips.\n"
-        f"The window shows {NUM_STRIPS} strips: grey = blue blob rejected, white = tape stripe,\n"
+        f"The window shows {NUM_STRIPS} strips: grey = tape-coloured blob rejected, white = tape stripe,\n"
         "green = line seen, orange = line predicted, red = lane centre. Press Ctrl+C to stop."
     )
 
