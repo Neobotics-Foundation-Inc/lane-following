@@ -193,7 +193,7 @@ All settings are constants at the top of lane_follow.py.
 ## Known limits
 
 - The program only sees what the camera sees. When the inside line of a corner leaves the view, it is predicted, not seen.
-- BLUE was tuned in one room. Different lights or a different floor need a retune. YELLOW and WHITE were measured in the AutoDRIVE twin, not on Purdue's floor: retune them there.
+- BLUE was tuned in one room. Different lights or a different floor need a retune. YELLOW and WHITE were measured in the AutoDRIVE twin, not on Purdue's floor: retune them there. So was MAT_MAX: if the car's camera shows the mat brighter than 140 (its exposure can lift a dark scene), every stripe is dropped and nothing is outlined. Check the mat's brightness in one frame from the car.
 - Dashed tape is joined by JOIN_GAP. Gaps wider than it need a larger JOIN_GAP or a lower MIN_LENGTH_FRAC.
 - The nearest strip is about 0.7 m ahead of the rear wheels, so in a tight bend the car still cuts in a few centimetres.
 - The twin's camera (130 degrees across the image's diagonal, 12 degrees up) is the camera's spec and the CAD's lean. It has not been checked against a frame from a car: if the floor in a real frame does not start about two thirds of the way down, CROP_TOP_FRAC and the gains need the car's own values.
