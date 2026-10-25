@@ -75,6 +75,14 @@ YELLOW = ((20, 80, 150), (40, 255, 255))
 WHITE = ((0, 0, 180), (179, 50, 255))
 TAPE = (YELLOW, WHITE)
 
+# which line each colour is, where the two lines differ. At Purdue traffic keeps right, so
+# in every lane the yellow centre line is on the car's left and the white edge on its
+# right: a stripe's colour says which line it is, even when only one line is in view (in a
+# bend the inner line leaves the view and the outer one sweeps across it, and by position
+# alone it can pass for the other line). None where both lines are the same tape (the room)
+LEFT_TAPE = YELLOW
+RIGHT_TAPE = WHITE
+
 # pieces of tape of one colour this many pixels apart join into one stripe, so a dashed
 # line counts as tape. 0 = no joining (the Neobotics room's tape is continuous)
 # TODO: Adjust if needed
@@ -93,6 +101,16 @@ TAPE_WIDTH_MIN = 6
 TAPE_WIDTH_MAX = 35
 MIN_ASPECT = 2.0
 MIN_LENGTH_FRAC = 0.6
+
+# tape lies on a dark mat: along each row of the image a run of tape colour has mat within
+# MAT_LOOK pixels on both sides (or the image's edge), mat being darker than MAT_MAX (HSV
+# value, 0-255). Glare off the shiny floor beyond the mat has floor round it and is
+# dropped, however thin or wide it looks; at Purdue's corners the camera sees the floor.
+# MAT_LOOK reaches past the blurred edge of a line seen at a shallow angle. MAT_MAX None
+# where the floor round the tape is not dark (the Neobotics room)
+# TODO: Adjust if needed
+MAT_MAX = 140
+MAT_LOOK = 8
 
 # CROP_TOP_FRAC - how far down the image the search starts,
 # as a fraction of the height (0.5 = the bottom half). The floor starts at the
@@ -223,28 +241,60 @@ def segment_tilt(contour):
 
 
 """
-Identifier: tape_contours
+Identifier: tape_masks
 
-Usage: finds the blobs of tape colour in one strip. Each colour in TAPE is masked on its
-own and its pieces closer than JOIN_GAP joined, so a dashed line is one blob and two
-lines of different colours never merge.
+Usage: marks the pixels of tape in the search area, one mask per colour in TAPE. Each
+colour's pieces closer than JOIN_GAP are joined, so a dashed line is one blob and two
+lines of different colours never merge. Then, with MAT_MAX set, every run of a colour
+along a row without mat beside it on both sides is cleared (see on_mat): a line that runs
+into a patch of glare loses only the rows where they touch.
 
 Parameters:
-- strip: the strip of the camera image to search
+- band: the search area of the camera image
 
 Outputs:
-- list of contours, as rc_utils.find_contours returns them
+- list of (colour, mask): the colour's entry in TAPE, and a mask of the band, 255 where
+  there is tape of that colour
 """
-def tape_contours(strip):
-    hsv = cv.cvtColor(strip, cv.COLOR_BGR2HSV)
-    mask = np.zeros(strip.shape[:2], np.uint8)
-    for lower, upper in TAPE:
-        color = cv.inRange(hsv, lower, upper)
+def tape_masks(band):
+    hsv = cv.cvtColor(band, cv.COLOR_BGR2HSV)
+    masks = []
+    for colour in TAPE:
+        mask = cv.inRange(hsv, colour[0], colour[1])
         if JOIN_GAP > 0:
             kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (JOIN_GAP, JOIN_GAP))
-            color = cv.morphologyEx(color, cv.MORPH_CLOSE, kernel)
-        mask = cv.bitwise_or(mask, color)
-    return cv.findContours(mask, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)[0]
+            mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
+        if MAT_MAX is not None:
+            on_mat(mask, hsv[:, :, 2])
+        masks.append((colour, mask))
+    return masks
+
+
+"""
+Identifier: on_mat
+
+Usage: clears every run of tape pixels along a row of the mask that does not have mat
+(a pixel darker than MAT_MAX) within MAT_LOOK pixels on its left and on its right. A run
+at the image's edge needs mat only on its other side.
+
+Parameters:
+- mask: tape mask of the search area, cleared in place
+- value: HSV value (brightness) of the search area
+
+Outputs:
+- none
+- mask is cleared in place
+"""
+def on_mat(mask, value):
+    width = mask.shape[1]
+    edges = np.diff(np.pad(mask > 0, ((0, 0), (1, 1))).astype(np.int8), axis=1)
+    rows, starts = np.nonzero(edges == 1)
+    ends = np.nonzero(edges == -1)[1]
+    for row, start, end in zip(rows, starts, ends):
+        left = value[row, max(start - MAT_LOOK, 0):start]
+        right = value[row, end:min(end + MAT_LOOK, width)]
+        if not ((left.size == 0 or left.min() < MAT_MAX) and (right.size == 0 or right.min() < MAT_MAX)):
+            mask[row, start:end] = 0
 
 
 """
@@ -255,15 +305,18 @@ grey and every accepted stripe white on the strip.
 
 Parameters:
 - strip: the strip of the camera image to search (a view into the full image)
+- masks: the strip's rows of each of tape_masks, as (colour, mask)
 - strip_height: height of the strip in pixels
 - width: width of the image in pixels
 
 Outputs:
-- list of (column, slope), one per accepted stripe
+- list of (column, slope, colour), one per accepted stripe
 """
-def tape_segments(strip, strip_height, width):
+def tape_segments(strip, masks, strip_height, width):
     segments = []
-    for contour in tape_contours(strip):
+    contours = [(colour, contour) for colour, mask in masks
+                for contour in cv.findContours(mask, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)[0]]
+    for colour, contour in contours:
         if rc_utils.get_contour_area(contour) < MIN_CONTOUR_AREA:
             continue
         rc_utils.draw_contour(strip, contour, rc_utils.ColorBGR.dark_gray.value)
@@ -286,8 +339,25 @@ def tape_segments(strip, strip_height, width):
             continue
 
         rc_utils.draw_contour(strip, contour, rc_utils.ColorBGR.white.value)
-        segments.append((center[1], segment_tilt(contour)))
+        segments.append((center[1], segment_tilt(contour), colour))
     return segments
+
+
+"""
+Identifier: can_be
+
+Usage: tells whether a stripe can be a given line, by its colour: any stripe can be
+either line where both lines are the same tape (LEFT_TAPE and RIGHT_TAPE None).
+
+Parameters:
+- segment: (column, slope, colour) from tape_segments
+- tape: LEFT_TAPE or RIGHT_TAPE
+
+Outputs:
+- True if the stripe can be that line
+"""
+def can_be(segment, tape):
+    return tape is None or segment[2] == tape
 
 
 """
@@ -297,11 +367,11 @@ Usage: picks the stripe that continues a line, which is the one nearest to where
 line is expected.
 
 Parameters:
-- segments: list of (column, slope) from tape_segments
+- segments: list of (column, slope, colour) from tape_segments
 - expected: column where the line is expected
 
 Outputs:
-- the nearest (column, slope), or None if it is more than MAX_JUMP pixels away
+- the nearest (column, slope, colour), or None if it is more than MAX_JUMP pixels away
 """
 def nearest_segment(segments, expected):
     best = None
@@ -316,23 +386,25 @@ def nearest_segment(segments, expected):
 """
 Identifier: lane_pair
 
-Usage: looks for two stripes the right distance apart to be the two lane lines. Once
-the strip has measured its lane width a pair must match it within WIDTH_TOLERANCE;
-before that any width between MIN_LANE_WIDTH and MAX_LANE_WIDTH will do.
+Usage: looks for two stripes the right distance apart, of the right colours, to be the
+two lane lines. Once the strip has measured its lane width a pair must match it within
+WIDTH_TOLERANCE; before that any width between MIN_LANE_WIDTH and MAX_LANE_WIDTH will do.
 
 Parameters:
-- segments: list of (column, slope) from tape_segments
+- segments: list of (column, slope, colour) from tape_segments
 - i: strip index, 0 is nearest the car
 - expected_center: column where the lane centre is expected, used to choose between
   several fitting pairs
 
 Outputs:
-- (left, right) as two (column, slope) entries, or None
+- (left, right) as two (column, slope, colour) entries, or None
 """
 def lane_pair(segments, i, expected_center):
     pairs = []
     for a in segments:
         for b in segments:
+            if not (can_be(a, LEFT_TAPE) and can_be(b, RIGHT_TAPE)):
+                continue
             gap = b[0] - a[0]
             if width_known[i]:
                 fits = abs(gap - strip_width[i]) <= WIDTH_TOLERANCE * strip_width[i]
@@ -503,6 +575,7 @@ def update_lines():
     band_top = int(height * CROP_TOP_FRAC)
     band_bottom = int(height * CROP_BOTTOM_FRAC)
     strip_height = (band_bottom - band_top) // NUM_STRIPS
+    masks = tape_masks(rc_utils.crop(image, (band_top, 0), (band_bottom, width)))
 
     for i in range(NUM_STRIPS):
         # Strip 0 at the bottom of the search area. crop() is a view, so drawing on the
@@ -516,16 +589,17 @@ def update_lines():
         expected_right = expected_column(
             strip_right, right_tilt, memory_right, i, strip_height, width // 2 + strip_width[i] // 2)
 
-        segments = tape_segments(strip, strip_height, width)
+        rows = [(colour, mask[top - band_top:bottom - band_top]) for colour, mask in masks]
+        segments = tape_segments(strip, rows, strip_height, width)
 
         # Best case: a pair the right distance apart. Else each line is the nearest
-        # stripe to where it is expected
+        # stripe of its colour to where it is expected
         pair = lane_pair(segments, i, (expected_left + expected_right) / 2)
         if pair is not None:
             left, right = pair
         else:
-            left = nearest_segment(segments, expected_left)
-            right = nearest_segment(segments, expected_right)
+            left = nearest_segment([s for s in segments if can_be(s, LEFT_TAPE)], expected_left)
+            right = nearest_segment([s for s in segments if can_be(s, RIGHT_TAPE)], expected_right)
             # One stripe cannot be both lines; keep the one nearer its expected spot
             if left is not None and right is not None and right[0] - left[0] < MIN_LANE_WIDTH:
                 if abs(left[0] - expected_left) <= abs(right[0] - expected_right):
@@ -535,8 +609,8 @@ def update_lines():
 
         left_seen[i] = left is not None
         right_seen[i] = right is not None
-        strip_left[i], left_tilt[i] = (left if left is not None else (None, 0.0))
-        strip_right[i], right_tilt[i] = (right if right is not None else (None, 0.0))
+        strip_left[i], left_tilt[i] = (left[:2] if left is not None else (None, 0.0))
+        strip_right[i], right_tilt[i] = (right[:2] if right is not None else (None, 0.0))
 
         if left is not None and right is not None:
             strip_width[i] = right[0] - left[0]

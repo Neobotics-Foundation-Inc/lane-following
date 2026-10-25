@@ -69,8 +69,8 @@ The program looks at the floor in the camera image, from the horizon down to the
 
 Every frame, about 60 times a second, it does this:
 
-1. In each strip, find the blobs of tape colour (each colour in `TAPE`; pieces of one colour closer than `JOIN_GAP` join, so the dashed yellow line is one stripe). Keep only the ones shaped like tape: a narrow stripe that runs through the strip. Colour alone is not enough, because the floor and other objects can look the same colour too.
-2. Pick the two stripes that are a lane width apart. Those are the left and right lines.
+1. In each strip, find the blobs of tape colour (each colour in `TAPE`; pieces of one colour closer than `JOIN_GAP` join, so the dashed yellow line is one stripe). Keep only the ones shaped like tape: a narrow stripe that runs through the strip. Colour alone is not enough, because the floor and other objects can look the same colour too. On Purdue's dark mat, also keep only tape with mat beside it: along each row of the image, a run of tape colour needs mat within a few pixels on both sides (`MAT_MAX`, `MAT_LOOK`). Glare off the shiny floor beyond the mat is white but has floor round it.
+2. Pick the two stripes that are a lane width apart. Those are the left and right lines. At Purdue the colour says which is which (`LEFT_TAPE`, `RIGHT_TAPE`): traffic keeps right, so the yellow centre line is always on the car's left and the white edge on its right.
 3. Follow each line from strip to strip. A stripe only counts if it continues the line below it, in the direction that line is leaning.
 4. If a line is out of view in a strip, predict where it is. First choice: next to the other line, at the lane width that strip measured earlier. Second choice: along the direction the line was heading.
 5. Take the lane centre in the nearest strip. The distance from the image centre is the offset.
@@ -134,15 +134,15 @@ A bag is about 100 to 200 MB per minute. You can also play a bag back and run la
 
 ## Trying it in AutoDRIVE
 
-The AutoDRIVE simulator has a twin of Purdue's testbed with a NeoRacer on it (branch `purdue-cosim` of [Neobotics-Foundation-Inc/AutoDRIVE](https://github.com/Neobotics-Foundation-Inc/AutoDRIVE/tree/purdue-cosim), scene `NeoRacer - Purdue Testbed`). Its NeoRacer has the car's camera: a 130 degree fisheye, leaning 12 degrees up, 640x480. Run the simulator, its `autodrive_neoracer` bridge with the driver's mux and throttle nodes, then this program as on the car:
+The AutoDRIVE simulator has a twin of Purdue's testbed with NeoRacers on it (branch `purdue-cosim` of [Neobotics-Foundation-Inc/AutoDRIVE](https://github.com/Neobotics-Foundation-Inc/AutoDRIVE/tree/purdue-cosim), scenes `NeoRacer - Purdue Testbed` and `NeoRacer - Purdue Testbed - Two Cars`). Its NeoRacer has the car's camera: a 130 degree fisheye, leaning 12 degrees up, 640x480. Run the simulator and its bridge (`scripts/autodrive_cars.py --cars N` of the driver's `neoracer_ros2_driver_purdue` branch: car N in ROS domain N), then this program as on the car, once per car:
 
 ```sh
-python3 lane_follow.py
+ROS_DOMAIN_ID=1 python3 lane_follow.py
 ```
 
-Nothing else may publish `/drive` meanwhile (another follower, a dashboard that drives): the mux passes both, so the car gets the other program's commands between this one's and turns far less than asked.
+Nothing else may publish `/drive` for that car meanwhile (another follower, a dashboard that drives): the mux passes both, so the car gets the other program's commands between this one's and turns far less than asked.
 
-From the start on the outer loop, over a minute (38 m, about two and a half laps, at 0.63 m/s): the car's middle stayed in its lane the whole time, the whole car between the lines 87% of the time, 2.7 cm off the lane's middle (median), 7.4 cm at the 95th percentile, 13 cm at worst (in the S, where the taped lane is also 5 to 7 cm wider than elsewhere). The steering reversed on 3% of commands. The twin's NeoRacer drives as neoracer-mujoco's model of the car does: its firmware's speed loop, motor, steering servo, springs and mass.
+On the testbed as Purdue taped it on 24 October 2026 (one loop and a road across it), from the start on the near straight: one car over a minute (37 m, two laps, at 0.62 m/s) kept the whole car between the lines 99.9% of the time, 1.8 cm off the lane's middle (median), 5.1 cm at the 95th percentile, 6.9 cm at worst. Two cars at once, five runs of 75 s each: the whole car between the lines 100% of the time in all ten, 6.3 cm off at worst. The twin's NeoRacer drives as neoracer-mujoco's model of the car does: its firmware's speed loop, motor, steering servo, springs and mass.
 
 ## Settings
 
@@ -154,7 +154,9 @@ All settings are constants at the top of lane_follow.py.
 | BLUE | (31, 40, 125) to (117, 128, 255) | HSV range for blue tape |
 | YELLOW | (20, 80, 150) to (40, 255, 255) | HSV range for Purdue's yellow tape, measured in the AutoDRIVE twin |
 | WHITE | (0, 0, 180) to (179, 50, 255) | HSV range for Purdue's white tape, measured in the AutoDRIVE twin |
+| LEFT_TAPE, RIGHT_TAPE | YELLOW, WHITE | Which colour each line is: the left line only from LEFT_TAPE stripes, the right only from RIGHT_TAPE. None, None where both lines are the same tape (the Neobotics room) |
 | JOIN_GAP | 15 | Pieces of one colour this many pixels apart join into one stripe (dashed lines) |
+| MAT_MAX, MAT_LOOK | 140, 8 | Tape needs mat (darker than MAT_MAX, HSV value) within MAT_LOOK pixels on both sides along each row. Drops glare off the floor beyond the mat. MAT_MAX None where the floor round the tape is not dark |
 | MIN_CONTOUR_AREA | 60 | Smallest blob to look at, in pixels |
 | TAPE_WIDTH_MIN, TAPE_WIDTH_MAX | 6, 35 | Width of a tape stripe, in pixels |
 | MIN_ASPECT | 2.0 | A stripe must be this many times longer than it is wide |
@@ -181,6 +183,7 @@ All settings are constants at the top of lane_follow.py.
 | --- | --- |
 | The tape is not found | Retune BLUE with the HSV tuner at ~/jupyter_ws/neoracer-os/labs/utility/hsv-p_tuner.py on the car. Lower MIN_LENGTH_FRAC if the tape shows grey in the window |
 | Blobs that are not tape show white | Lower TAPE_WIDTH_MAX to the real tape width plus a few pixels. Raise MIN_ASPECT to 3 |
+| Tape on the mat is dropped (no outline at all) | Raise MAT_MAX: the mat looks brighter than 140 to this camera |
 | The car steers on clutter | Raise MIN_STRIPS_SEEN to 3 |
 | The car weaves on straights | Lower KD, then KP |
 | The car turns in late | Raise K_HEADING |
@@ -204,4 +207,5 @@ GPLv3. Copyright Neobotics Foundation Inc.
 ## Changelog
 
 - Unreleased (branch `purdue-testbed`): Purdue's testbed. The tape is a set of colours (`TAPE`: yellow and white there, blue in the Neobotics room), dashes joined into one stripe (`JOIN_GAP`); the search starts at the horizon and stops above the car's nose (`CROP_TOP_FRAC`, `CROP_BOTTOM_FRAC`); KP 1.0, K_HEADING 0 and KD 0 for its tight bends and its noisy detections. Tried in the AutoDRIVE twin of the testbed.
+- Unreleased (branch `purdue-testbed`), Purdue's layout of 24 October 2026: tape needs mat beside it (`MAT_MAX`, `MAT_LOOK`): in a corner by the mat's edge, glare off the floor read as white tape, paired with the outer line as a lane, and the car drove off the mat. A line's colour says which line it is (`LEFT_TAPE`, `RIGHT_TAPE`): in a bend the outer white line sweeps across the view, was taken for the left line, and the car steered out. One car 99.9%, two cars 100% with the whole car in its lane.
 - 0.1.0: first version. Four strips, tape-shaped stripes, prediction of hidden lines, heading from a fitted line, constant speed.
